@@ -6,77 +6,114 @@ module Fastlane
 
     class UploadToDiawiAction < Action
       def self.run(params)
-        # fastlane will take care of reading in the parameter and fetching the environment variable:
 
         UI.message "PATH TO IPA = #{params[:path_to_ipa]}"
         UI.message "DIAWI TOKEN = #{params[:diawi_token]}"
 
         link = download_link_for_file(params[:path_to_ipa], params[:diawi_token])
 
+
         UI.message "GENERATED DIAWI LINK = #{link}"
 
         Actions.lane_context[SharedValues::UPLOAD_TO_DIAWI_GENERATED_LINK] = link
       end
 
-      def self.download_link_for_file(path = '', d_token = '')
-        @d_token = d_token
-        if d_token.length == 0
-          return 'ERROR: Diawi API token not provided'
-        elsif path.length == 0
-          return 'ERROR: Path to file not provided'
+      def self.download_link_for_file(path = '', token = '')
+
+        @token = token
+        @path = path
+
+        result = {}
+        result[:link] = 'NO LINK'
+        result[:message] = 'NO MESSAGE'
+        result[:success] = 0
+
+        if @token.length == 0
+          result[:message] = 'ERROR: Diawi API token not provided'
+          return result
+        elsif @path.length == 0
+          result[:message] = 'ERROR: Path to file not provided'
+          return result
         end
 
-        upload_response = upload_ipa_from_path(path)
-        parsed_upload_response = JSON.parse(upload_response)
+        upload_response = upload_ipa_from_path(@path)
+        if upload_response == nil
+          result[:message] = 'ERROR ON UPLOAD'
+          return result
+        end
 
-        result = 'NO RESULT'
+        if (job_id = upload_response['job'])
+          link = get_download_link(job_id)
+          if link =~ URI.regexp
+            result[:success] = 1
+            result[:link] = link
+          end
+        end
 
-        if (job_id = parsed_upload_response['job'])
+        result
+      end
 
-          1.upto(5) do |n|
-            puts "status request = #{n}"
+      def self.get_download_link(job)
 
-            status_response = request_status_for_job_id(job_id)
-            parsed_status_response = JSON.parse(status_response)
+        download_link = 'NO LINK'
 
-            if (status = parsed_status_response['status'])
-              case status
+        1.upto(10) do |status_request_count|
+          puts "status request = #{status_request_count}"
+
+          status_response = request_status_for_job_id(job)
+
+          if (status = status_response['status'])
+
+            case status
               when 2000
-                result = parsed_status_response['link']
+                download_link = status_response['link']
                 break
               when 2001
-                puts 'WAIT: ' + parsed_status_response['message']
+                puts "WAIT: #{status_response['message']}"
+
               when 4000
-                result = 'ERROR: ' + parsed_status_response['message']
+                download_link = "ERROR: #{status_response['message']}"
                 break
               else
-                result = "Unknown status: #{status}"
-              end
+                download_link = "Unknown status: #{status}"
+                break
             end
 
-                sleep 1 # second
-              end
-
-            end
-
-            result
           end
 
-          def self.upload_ipa_from_path(path)
-            puts "path = #{path}"
-            result = `curl https://upload.diawi.com/ -F token='#{@d_token}' -F file=@#{path} -F find_by_udid=0 -F wall_of_apps=0`
-            puts "result = #{result}"
+          sleep 1
 
-            result
-          end
+        end
 
-          def self.request_status_for_job_id(job_id)
-            puts "job_id = #{job_id}"
-            status = `curl 'https://upload.diawi.com/status?token=#{@d_token}&job=#{job_id}'`
-            puts "status = #{status}"
+        download_link
+      end
 
-            status
-          end
+      def self.upload_ipa_from_path(path)
+        upload_response = `curl https://upload.diawi.com/ -F token='#{@token}' -F file=@#{path} -F find_by_udid=0 -F wall_of_apps=0`
+        puts "upload_response = #{upload_response}"
+        if is_json?(upload_response)
+          return JSON.parse(upload_response)
+        end
+        nil
+      end
+
+      def self.request_status_for_job_id(job_id)
+        status_response = `curl 'https://upload.diawi.com/status?token=#{@token}&job=#{job_id}'`
+        puts "status_response = #{status_response}"
+        if is_json?(status_response)
+          return JSON.parse(status_response)
+        end
+        nil
+      end
+
+      def self.is_json?(string)
+        begin
+          JSON.parse(string)
+        rescue JSON::ParserError => e
+          return false
+        end
+        true
+      end
 
 
       #####################################################
@@ -84,61 +121,42 @@ module Fastlane
       #####################################################
 
       def self.description
-        "A short description with <= 80 characters of what this action does"
+        "This action can upload .ipa file to www.diawi.com and return upload link"
       end
 
       def self.details
-        # Optional:
-        # this is your chance to provide a more detailed description of this action
-        "You can use this action to do cool things..."
+        ""
       end
 
       def self.available_options
-        # Define all options your action supports. 
-        
-        # Below a few examples
         [
-          FastlaneCore::ConfigItem.new(key: :diawi_token,
-           env_name: "FL_UPLOAD_TO_DIAWI_DIAWI_TOKEN",
-           description: "Diawi token",
+            FastlaneCore::ConfigItem.new(key: :diawi_token,
+                                         env_name: "FL_UPLOAD_TO_DIAWI_DIAWI_TOKEN",
+                                         description: "Diawi token",
                                          is_string: true, # true: verifies the input is a string, false: every kind of value
                                          default_value: ''), # the default value if the user didn't provide one
 
-          FastlaneCore::ConfigItem.new(key: :path_to_ipa,
-            env_name: "FL_UPLOAD_TO_DIAWI_PATH_TO_IPA",
-            description: "Path to ipa that needs to be uploaded",
-                                          is_string: true, # true: verifies the input is a string, false: every kind of value
-                                          default_value: '') # the default value if the user didn't provide one
+            FastlaneCore::ConfigItem.new(key: :path_to_ipa,
+                                         env_name: "FL_UPLOAD_TO_DIAWI_PATH_TO_IPA",
+                                         description: "Path to ipa that needs to be uploaded",
+                                         is_string: true, # true: verifies the input is a string, false: every kind of value
+                                         default_value: '') # the default value if the user didn't provide one
         ]
       end
 
       def self.output
-        # Define the shared values you are going to provide
-        # Example
-        [
-          ['UPLOAD_TO_DIAWI_CUSTOM_VALUE', 'A description of what this value contains']
-        ]
+
       end
 
       def self.return_value
-        # If you method provides a return value, you can describe here what it does
+
       end
 
       def self.authors
-        # So no one will ever forget your contribution to fastlane :) You are awesome btw!
-["Your GitHub/Twitter Name"]
-end
+        ["https://github.com/yurapriv"]
+      end
 
-def self.is_supported?(platform)
-        # you can do things like
-        # 
-        #  true
-        # 
-        #  platform == :ios
-        # 
-        #  [:ios, :mac].include?(platform)
-        # 
-
+      def self.is_supported?(platform)
         platform == :ios
       end
     end

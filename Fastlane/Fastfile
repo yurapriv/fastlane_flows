@@ -11,20 +11,111 @@
 
 # This is the minimum version number required.
 # Update this, if you use features of a newer version
-
 fastlane_version "2.13.0"
 
 default_platform :ios
 
-lane :beta do
-  gym(output_directory: "./builds",
-    output_name: "NAME",
-    export_method: "METHOD",
-    scheme: "SCHEME_NAME"
+platform :ios do
+  before_all do
+
+    ensure_git_status_clean
+
+    @version = get_version_number(xcodeproj: "Project.xcodeproj")
+    @build_number = increment_build_number(xcodeproj: "Project.xcodeproj")
+
+  end
+
+  lane :beta_and_prod do
+    beta
+    prod
+  end
+
+  lane :beta do
+
+    gym(
+        workspace: "Project.xcworkspace",
+        output_directory: "./builds",
+        output_name: "NAME",
+        export_method: "enterprise",
+        scheme: "SCHEME"
     )
 
-  upload_to_diawi(diawi_token: "DIAWI_TOKEN",
-    path_to_ipa: "#{lane_context[SharedValues::IPA_OUTPUT_PATH]}")
+    upload_result = upload_to_diawi(diawi_token: "TOKEN",
+                                    path_to_ipa: "#{lane_context[SharedValues::IPA_OUTPUT_PATH]}")
+
+    if upload_result[:success] == 0
+      UI.important "Got diawi error: #{upload_result[:message]}"
+      return
+    end
+
+    commit = last_git_commit
+
+    post_to_telegram(result: message_text('TITLE',
+                                          upload_result[:link],
+                                          commit[:abbreviated_commit_hash],
+                                          version_and_build(@version, @build_number),
+                                          'SERVER_ADDRESS'))
+  end
+
+  lane :prod do
+
+    gym(
+        workspace: "Project.xcworkspace",
+        output_directory: "./builds",
+        output_name: "NAME",
+        export_method: "enterprise",
+        scheme: "SCHEME"
+    )
+
+    upload_result = upload_to_diawi(diawi_token: "DIAWI_TOKEN",
+                                    path_to_ipa: "#{lane_context[SharedValues::IPA_OUTPUT_PATH]}")
+
+    if upload_result[:success] == 0
+      UI.important "Got diawi error: #{upload_result[:message]}"
+      return
+    end
+
+    commit = last_git_commit
+
+    post_to_telegram(result: message_text('TITLE',
+                                          upload_result[:link],
+                                          commit[:abbreviated_commit_hash],
+                                          version_and_build(@version, @build_number),
+                                          'SERVER_ADDRESS'))
+  end
+
+  private_lane :post_to_telegram do |options|
+
+    ifttt(
+        api_key: "API_KEY",
+        event_name: "EVENT_NAME",
+        value1: options[:result],
+    )
+
+  end
+
+  after_all do |lane|
+    commit_version_bump(
+        message: "Version Bump #{version_and_build(@version, @build_number)}",
+        xcodeproj: "Project.xcodeproj"
+    )
+  end
+
+  error do |lane, exception|
+
+  end
+end
+
+def message_text(title, link, git_hash, version, server_addres)
+  message =   title + " \n</br>" +
+      "Ссылка: " + link + " \n</br> " +
+      "Коммит: " + git_hash + " \n</br>" +
+      "Версия: " + version + " \n</br>" +
+      "Сервер: " + server_addres
+end
+
+def version_and_build(version, build)
+  version + '.' + build
 end
 
 # More information about multiple platforms in fastlane: https://github.com/fastlane/fastlane/blob/master/fastlane/docs/Platforms.md
