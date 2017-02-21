@@ -1,15 +1,24 @@
-# fastlane_flows 
+# Overview
+Collection of custom [Fastlane](https://github.com/fastlane/fastlane) lanes
 
 ## Lanes
 
-####:beta
+####Before all:
+build number incrementation
 
+####`:beta`
+1. produce build with beta scheme
+2. upload to diawi.com
+3. post to telegram message with download link and build meta info
 
-####:prod
+####`:prod`
+1. produce build with production scheme
+2. upload to diawi.com
+3. post to telegram message with download link and build meta info
 
-
-####:beta_and_prod
-
+####`:beta_and_prod`
+1. run `:beta` lane
+2. run `:prod` lane
 
 ## Custom actions
 
